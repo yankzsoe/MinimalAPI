@@ -11,15 +11,18 @@ namespace MinimalAPI {
 
 
         public static void MapWeatherForecastEndpoints(this IEndpointRouteBuilder builder) {
-            builder.MapGet("/api/weatherforecast", async (HttpContext httpContext, [FromServices] ILogger<Program> logger) => {
+            builder.MapGet("/api/weatherforecast", async ([FromServices] IHttpContextAccessor httpContextAccessor, [FromServices] ILogger<Program> logger) => {
+
+                ArgumentNullException.ThrowIfNull(nameof(httpContextAccessor.HttpContext));
+
                 var transaction = Elastic.Apm.Agent.Tracer.CurrentTransaction;
 
                 if (transaction == null) {
-                    transaction = Elastic.Apm.Agent.Tracer.StartTransaction("WeatherForecastTrx-01", ApiConstants.TypeRequest);
+                    transaction = Elastic.Apm.Agent.Tracer.StartTransaction("WeatherForecastTrx", ApiConstants.TypeRequest);
                 }
 
                 try {
-                    var userId = httpContext.Request.Headers["UserId"].FirstOrDefault() ?? "Unknown";
+                    var userId = httpContextAccessor.HttpContext!.Request.Headers["UserId"].FirstOrDefault() ?? "Unknown";
 
                     // Record the user information to transacton
                     transaction.Context.User = new User {
@@ -30,14 +33,12 @@ namespace MinimalAPI {
 
                     var forecast = GenerateWeatherForecastData();
 
-                    // Record data to APM
                     var response = JsonSerializer.Serialize(forecast);
-                    transaction.CaptureSpan("HTTP Response", ApiConstants.SubtypeHttp, () => { });
-                    logger.LogInformation("HTTP Response: {HttpResponse}", response);
+                    logger.LogInformation("ForecastRequest: {BodyRequest}, ForecastResponse: {BodyResponse}", null, response);
 
-                    // Send respons to client
-                    httpContext.Response.ContentType = "application/json";
-                    await httpContext.Response.WriteAsync(response);
+                    // Send response to client
+                    httpContextAccessor.HttpContext.Response.ContentType = "application/json";
+                    await httpContextAccessor.HttpContext.Response.WriteAsync(response);
                 } catch (Exception ex) {
                     transaction.CaptureException(ex);
                     throw;
@@ -47,9 +48,7 @@ namespace MinimalAPI {
             });
 
             builder.MapPost("/api/weatherforecast", async ([FromServices] IHttpContextAccessor httpContextAccessor, [FromServices] ILogger<Program> logger) => {
-                if (httpContextAccessor.HttpContext == null) {
-                    throw new ArgumentNullException(nameof(httpContextAccessor.HttpContext));
-                }
+                ArgumentNullException.ThrowIfNull(nameof(httpContextAccessor.HttpContext));
 
                 var transaction = Elastic.Apm.Agent.Tracer.CurrentTransaction;
 
@@ -58,7 +57,7 @@ namespace MinimalAPI {
                 }
 
                 try {
-                    var userId = httpContextAccessor.HttpContext.Request.Headers["UserId"].FirstOrDefault() ?? "Unknown";
+                    var userId = httpContextAccessor.HttpContext!.Request.Headers["UserId"].FirstOrDefault() ?? "Unknown";
                     var request = httpContextAccessor.HttpContext.Request;
                     var body = string.Empty;
                     using (var reader = new StreamReader(request.Body)) {
